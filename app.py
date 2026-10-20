@@ -16,8 +16,10 @@ import os
 import re
 import io
 import csv
+import hmac
 import threading
 import webbrowser
+from functools import wraps
 
 from flask import Flask, request, Response, jsonify
 
@@ -30,9 +32,14 @@ IS_HOSTED = bool(os.environ.get("PORT"))
 HOST = "0.0.0.0" if IS_HOSTED else "127.0.0.1"
 PORT = int(os.environ.get("PORT", "8000"))
 
+# Простая защита паролем (HTTP Basic). Пусто = без пароля.
+APP_USER = os.environ.get("APP_USER", "admin")
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
+AUTH_ON = bool(APP_PASSWORD)
+
 app = Flask(__name__)
 
-# Постоянное хранилище найденных заказов (SQLite)
+# Постоянное хранилище найденных заказов (SQLite/PostgreSQL)
 storage.init()
 
 # Данные последнего успешного поиска (кэш) + защита от параллельных запусков
@@ -47,6 +54,27 @@ _SOURCE_FUNCS = {
     "freelancer": ("Freelancer.com", P.parse_freelancer),
     "telegram": ("Telegram", P.parse_telegram),
 }
+
+
+def _check_auth(user, pwd):
+    """Сравнение логина/пароля в постоянном времени."""
+    ok_user = hmac.compare_digest(user or "", APP_USER)
+    ok_pwd = hmac.compare_digest(pwd or "", APP_PASSWORD)
+    return ok_user and ok_pwd
+
+
+@app.before_request
+def _require_auth():
+    """HTTP Basic Auth на все роуты, если задан APP_PASSWORD."""
+    if not AUTH_ON:
+        return None
+    auth = request.authorization
+    if auth and _check_auth(auth.username, auth.password):
+        return None
+    return Response(
+        "Требуется авторизация", 401,
+        {"WWW-Authenticate": 'Basic realm="Poisk zakaza"'},
+        mimetype="text/plain")
 
 
 def _parse_price(price):
