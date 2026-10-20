@@ -2,24 +2,24 @@
 """
 Интерактивный поиск заказов на фриланс-биржах.
 
-Локальное приложение: Python-бэкенд (стандартная библиотека) отдаёт
-HTML-интерфейс и JSON-API /api/search. Поиск выполняется по заданным
-параметрам (категории, источники, текстовый запрос, бюджет, свежесть).
+Веб-приложение на Flask: отдаёт HTML-интерфейс и JSON-API.
+Поиск выполняется по заданным параметрам (категории, источники,
+текстовый запрос, бюджет). Экспорт в Excel/CSV.
 
-Запуск:
-    python app.py            # открой http://localhost:8000
+Запуск локально:
+    python app.py            # открой http://127.0.0.1:8000
 
-Остановка: Ctrl+C.
+На хостинге (Render и т.п.):
+    gunicorn app:app
 """
-import json
 import os
 import re
 import io
 import csv
 import threading
 import webbrowser
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+
+from flask import Flask, request, Response, jsonify
 
 import parser_freelance as P
 
@@ -28,6 +28,8 @@ import parser_freelance as P
 IS_HOSTED = bool(os.environ.get("PORT"))
 HOST = "0.0.0.0" if IS_HOSTED else "127.0.0.1"
 PORT = int(os.environ.get("PORT", "8000"))
+
+app = Flask(__name__)
 
 # Данные последнего успешного поиска (кэш) + защита от параллельных запусков
 _CACHE = {"rows": [], "meta": {}}
@@ -186,95 +188,71 @@ def _export_xlsx(rows):
     return buf.getvalue()
 
 
-class Handler(BaseHTTPRequestHandler):
-    def _send(self, code, body, ctype="application/json; charset=utf-8",
-              disposition=None):
-        data = body if isinstance(body, bytes) else body.encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        if disposition:
-            self.send_header("Content-Disposition", disposition)
-        self.end_headers()
-        self.wfile.write(data)
+@app.route("/")
+@app.route("/index.html")
+def index():
+    return Response(INDEX_HTML, mimetype="text/html")
 
-    def log_message(self, *args):
-        pass
 
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-        if path in ("/", "/index.html"):
-            self._send(200, INDEX_HTML, "text/html; charset=utf-8")
-            return
-        if path == "/api/search":
-            self._handle_search(parse_qs(parsed.query))
-            return
-        if path == "/api/status":
-            self._send(200, json.dumps({
-                "running": _RUNNING["flag"],
-                "count": len(_CACHE["rows"]),
-                "meta": _CACHE["meta"],
-            }))
-            return
-        self._send(404, json.dumps({"error": "not found"}))
+@app.route("/api/status")
+def api_status():
+    return jsonify({
+        "running": _RUNNING["flag"],
+        "count": len(_CACHE["rows"]),
+        "meta": _CACHE["meta"],
+    })
 
-    def do_POST(self):
-        parsed = urlparse(self.path)
-        if parsed.path != "/api/export":
-            self._send(404, json.dumps({"error": "not found"}))
-            return
-        try:
-            length = int(self.headers.get("Content-Length", 0))
-            payload = json.loads(self.rfile.read(length) or b"{}")
-            rows = payload.get("rows", [])
-            fmt = payload.get("format", "xlsx")
-            if fmt == "csv":
-                data = _export_csv(rows)
-                self._send(200, data, "text/csv; charset=utf-8",
-                           f"attachment; filename=orders.csv")
-            else:
-                data = _export_xlsx(rows)
-                self._send(200, data,
-                           "application/vnd.openxmlformats-officedocument."
-                           "spreadsheetml.sheet",
-                           "attachment; filename=orders.xlsx")
-        except Exception as e:
-            self._send(500, json.dumps({"error": str(e)}))
 
-    def _handle_search(self, qs):
-        if _RUNNING["flag"]:
-            self._send(409, json.dumps(
-                {"error": "Поиск уже выполняется, подождите..."}))
-            return
+@app.route("/api/search")
+def api_search():
+    if _RUNNING["flag"]:
+        return jsonify({"error": "Поиск уже выполняется, подождите..."}), 409
 
-        sources = qs.get("sources", [""])[0].split(",")
-        sources = [s for s in sources if s] or list(_SOURCE_FUNCS.keys())
-        pages = qs.get("pages", ["3"])[0]
-        query = qs.get("q", [""])[0].strip()
-        categories = qs.get("categories", [""])[0]
-        categories = [c for c in categories.split(",") if c]
+    sources = request.args.get("sources", "").split(",")
+    sources = [s for s in sources if s] or list(_SOURCE_FUNCS.keys())
+    pages = request.args.get("pages", "3")
+    query = request.args.get("q", "").strip()
+    categories = [c for c in request.args.get("categories", "").split(",") if c]
 
+    with _LOCK:
+        _RUNNING["flag"] = True
+    try:
+        rows = _collect(sources, pages, query, categories)
+        _CACHE["rows"] = rows
+        _CACHE["meta"] = {
+            "sources": sources,
+            "pages": pages,
+            "query": query,
+            "categories": categories,
+            "count": len(rows),
+        }
+        return jsonify({"rows": rows, "meta": _CACHE["meta"]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
         with _LOCK:
-            _RUNNING["flag"] = True
-        try:
-            rows = _collect(sources, pages, query, categories)
-            _CACHE["rows"] = rows
-            _CACHE["meta"] = {
-                "sources": sources,
-                "pages": pages,
-                "query": query,
-                "categories": categories,
-                "count": len(rows),
-            }
-            self._send(200, json.dumps(
-                {"rows": rows, "meta": _CACHE["meta"]},
-                ensure_ascii=False))
-        except Exception as e:
-            self._send(500, json.dumps({"error": str(e)}))
-        finally:
-            with _LOCK:
-                _RUNNING["flag"] = False
+            _RUNNING["flag"] = False
+
+
+@app.route("/api/export", methods=["POST"])
+def api_export():
+    try:
+        payload = request.get_json(silent=True) or {}
+        rows = payload.get("rows", [])
+        fmt = payload.get("format", "xlsx")
+        if fmt == "csv":
+            data = _export_csv(rows)
+            return Response(
+                data, mimetype="text/csv",
+                headers={"Content-Disposition": "attachment; filename=orders.csv"})
+        data = _export_xlsx(rows)
+        return Response(
+            data,
+            mimetype="application/vnd.openxmlformats-officedocument"
+                     ".spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=orders.xlsx"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 INDEX_HTML = r"""<!DOCTYPE html>
@@ -601,7 +579,6 @@ document.getElementById("exportCsv").onclick = ()=>doExport("csv");
 
 
 def main():
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"Сервер запущен: http://{HOST}:{PORT}")
     print("Остановка: Ctrl+C")
     if not IS_HOSTED:
@@ -609,11 +586,7 @@ def main():
             webbrowser.open(f"http://127.0.0.1:{PORT}")
         except Exception:
             pass
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nОстановлено.")
-        server.shutdown()
+    app.run(host=HOST, port=PORT, threaded=True)
 
 
 if __name__ == "__main__":

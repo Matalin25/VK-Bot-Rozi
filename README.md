@@ -29,7 +29,7 @@ python app.py
 4. Render подхватит `render.yaml`. Если нет — задайте вручную:
    - **Runtime:** Python
    - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `python app.py`
+   - **Start Command:** `gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 300`
    - **Plan:** Free
 5. Нажмите **Create Web Service**. Через пару минут получите ссылку вида
    `https://poisk-zakaza.onrender.com`.
@@ -53,7 +53,8 @@ python app.py
 
 ## Файлы
 
-- `app.py` — HTTP-сервер (stdlib), HTML-интерфейс, API поиска и экспорта
+- `app.py` — Flask-приложение: HTML-интерфейс, API поиска и экспорта
 - `parser_freelance.py` — парсеры источников, матчеры и категории
 - `start.bat` — локальный запуск в один клик
+- `requirements.txt` — зависимости (Flask, gunicorn, requests, bs4, openpyxl)
 - `render.yaml` — конфигурация деплоя на Render
