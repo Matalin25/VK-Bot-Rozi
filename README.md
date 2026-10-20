@@ -51,6 +51,25 @@ Railway читает `Procfile` и `railway.json` из корня проекта
 > У Railway нет постоянно-бесплатного плана: даётся разовый trial-кредит,
 > далее оплата (~$5/мес). Зато сервис не «засыпает».
 
+## Деплой на Amvera Cloud (РФ, есть бесплатный тариф)
+
+Amvera читает `amvera.yml` из корня проекта. Деплой идёт через свой git-remote.
+
+1. Создайте аккаунт на https://cloud.amvera.ru и нажмите **Создать** →
+   тип «Приложение».
+2. На этапе «Загрузка данных» выберите подключение к существующему
+   GitHub-репозиторию **или** используйте git-remote Amvera.
+3. Через git-remote:
+   ```powershell
+   & "C:\Program Files\Git\cmd\git.exe" remote add amvera https://git.amvera.ru/<логин>/<проект>
+   & "C:\Program Files\Git\cmd\git.exe" push amvera main:master
+   ```
+4. Дождитесь статуса «Успешно развернуто». Публичный адрес —
+   `https://<проект>-<логин>.amvera.io`.
+
+> Конфигурация в `amvera.yml`: Python 3.12, pip, gunicorn на порту 80
+> (`containerPort: 80`), постоянное хранилище `/data`.
+
 ## Переменные окружения
 
 | Переменная     | Назначение                                  |
@@ -73,4 +92,5 @@ Railway читает `Procfile` и `railway.json` из корня проекта
 - `requirements.txt` — зависимости (Flask, gunicorn, requests, bs4, openpyxl)
 - `render.yaml` — конфигурация деплоя на Render
 - `Procfile` / `railway.json` — конфигурация деплоя на Railway
+- `amvera.yml` — конфигурация деплоя на Amvera Cloud
 - `runtime.txt` — версия Python
