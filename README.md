@@ -37,6 +37,20 @@ python app.py
 > Бесплатный тариф Render «засыпает» после 15 минут простоя: первый
 > запрос после паузы грузится ~30–60 секунд.
 
+## Деплой на Railway.app
+
+Railway читает `Procfile` и `railway.json` из корня проекта.
+
+1. Откройте https://railway.com/new → **Deploy from GitHub repo**.
+2. Выберите репозиторий `VK-Bot-Rozi`.
+3. Railway сам поставит зависимости (`requirements.txt`) и запустит
+   `gunicorn` согласно `Procfile` / `railway.json`.
+4. Во вкладке **Settings → Networking** нажмите **Generate Domain**,
+   чтобы получить публичную ссылку.
+
+> У Railway нет постоянно-бесплатного плана: даётся разовый trial-кредит,
+> далее оплата (~$5/мес). Зато сервис не «засыпает».
+
 ## Переменные окружения
 
 | Переменная     | Назначение                                  |
@@ -58,3 +72,5 @@ python app.py
 - `start.bat` — локальный запуск в один клик
 - `requirements.txt` — зависимости (Flask, gunicorn, requests, bs4, openpyxl)
 - `render.yaml` — конфигурация деплоя на Render
+- `Procfile` / `railway.json` — конфигурация деплоя на Railway
+- `runtime.txt` — версия Python
