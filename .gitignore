@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Временные файлы Excel (lock)
+~$*.xlsx
+~$*.xls
+
+# Итоговые файлы парсера (генерируются заново)
+Заказы_трекер_задач.xlsx
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Секреты и локальные настройки
+.env
+*.local
