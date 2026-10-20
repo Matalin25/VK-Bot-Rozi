@@ -10,7 +10,16 @@ services:
         value: "3.12.6"
       - key: PYTHONIOENCODING
         value: utf-8
+      - key: DATABASE_URL
+        fromDatabase:
+          name: poisk-zakaza-db
+          property: connectionString
       # Раскомментируйте и укажите прокси, если t.me блокируется:
       # - key: TG_PROXY
       #   value: socks5h://127.0.0.1:1080
 
+databases:
+  - name: poisk-zakaza-db
+    plan: free
+    databaseName: orders
+    user: orders
