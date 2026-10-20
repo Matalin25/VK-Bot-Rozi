@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: poisk-zakaza
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.6"
+      - key: PYTHONIOENCODING
+        value: utf-8
+      # Раскомментируйте и укажите прокси, если t.me блокируется:
+      # - key: TG_PROXY
+      #   value: socks5h://127.0.0.1:1080

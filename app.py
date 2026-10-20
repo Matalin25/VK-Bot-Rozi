@@ -23,8 +23,11 @@ from urllib.parse import urlparse, parse_qs
 
 import parser_freelance as P
 
-HOST = "127.0.0.1"
-PORT = 8000
+# На хостингах (Render/Railway) порт задаётся переменной PORT,
+# слушать нужно на 0.0.0.0. Локально — 127.0.0.1:8000.
+IS_HOSTED = bool(os.environ.get("PORT"))
+HOST = "0.0.0.0" if IS_HOSTED else "127.0.0.1"
+PORT = int(os.environ.get("PORT", "8000"))
 
 # Данные последнего успешного поиска (кэш) + защита от параллельных запусков
 _CACHE = {"rows": [], "meta": {}}
@@ -599,13 +602,13 @@ document.getElementById("exportCsv").onclick = ()=>doExport("csv");
 
 def main():
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    url = f"http://{HOST}:{PORT}"
-    print(f"Сервер запущен: {url}")
-    print("Открой в браузере. Остановка: Ctrl+C")
-    try:
-        webbrowser.open(url)
-    except Exception:
-        pass
+    print(f"Сервер запущен: http://{HOST}:{PORT}")
+    print("Остановка: Ctrl+C")
+    if not IS_HOSTED:
+        try:
+            webbrowser.open(f"http://127.0.0.1:{PORT}")
+        except Exception:
+            pass
     try:
         server.serve_forever()
     except KeyboardInterrupt:
