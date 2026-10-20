@@ -22,6 +22,7 @@ import webbrowser
 from flask import Flask, request, Response, jsonify
 
 import parser_freelance as P
+import storage
 
 # На хостингах (Render/Railway) порт задаётся переменной PORT,
 # слушать нужно на 0.0.0.0. Локально — 127.0.0.1:8000.
@@ -30,6 +31,9 @@ HOST = "0.0.0.0" if IS_HOSTED else "127.0.0.1"
 PORT = int(os.environ.get("PORT", "8000"))
 
 app = Flask(__name__)
+
+# Постоянное хранилище найденных заказов (SQLite)
+storage.init()
 
 # Данные последнего успешного поиска (кэш) + защита от параллельных запусков
 _CACHE = {"rows": [], "meta": {}}
@@ -200,7 +204,26 @@ def api_status():
         "running": _RUNNING["flag"],
         "count": len(_CACHE["rows"]),
         "meta": _CACHE["meta"],
+        "history": storage.stats(),
     })
+
+
+@app.route("/api/history")
+def api_history():
+    try:
+        limit = int(request.args.get("limit", "500"))
+    except ValueError:
+        limit = 500
+    limit = max(1, min(limit, 5000))
+    query = request.args.get("q", "").strip()
+    rows = storage.history(limit=limit, query=query)
+    return jsonify({"rows": rows, "stats": storage.stats()})
+
+
+@app.route("/api/history/clear", methods=["POST"])
+def api_history_clear():
+    storage.clear()
+    return jsonify({"ok": True, "stats": storage.stats()})
 
 
 @app.route("/api/search")
@@ -226,6 +249,16 @@ def api_search():
             "categories": categories,
             "count": len(rows),
         }
+        # сохраняем в историю и помечаем новые заказы
+        seen_before = storage.known_keys()
+        storage.save_run(rows, _CACHE["meta"])
+        new_keys = [r.get("link") or f"{r.get('source','')}:{r.get('name','')}"
+                    for r in rows]
+        new_set = {k for k in new_keys if k not in seen_before}
+        for r in rows:
+            key = r.get("link") or f"{r.get('source','')}:{r.get('name','')}"
+            r["is_new"] = key in new_set
+        _CACHE["meta"]["new"] = len(new_set)
         return jsonify({"rows": rows, "meta": _CACHE["meta"]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -355,6 +388,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   </div>
   <div class="row">
     <button id="go">&#128269; Искать</button>
+    <button id="loadHistory" style="background:#7a5af8">&#128190; Загрузить из истории</button>
     <button id="exportXlsx" style="background:#217346">&#128202; Экспорт Excel</button>
     <button id="exportCsv" style="background:#5a6b82">&#128196; Экспорт CSV</button>
     <span class="status" id="status">Готов к поиску</span>
@@ -382,6 +416,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
         <option value="applied">Только с откликом</option>
         <option value="fav">Только избранное</option>
         <option value="new">Только непросмотренные</option>
+        <option value="isnew">Только новые в истории</option>
       </select>
     </div>
     <div>
@@ -456,12 +491,29 @@ async function search(){
     if(data.error){ status.textContent = "Ошибка: "+data.error; go.disabled=false; return; }
     ALL = data.rows || [];
     META = data.meta || {};
-    status.textContent = "Найдено заказов: "+ALL.length;
+    const nw = META.new || 0;
+    status.textContent = "Найдено заказов: "+ALL.length+(nw ? " (новых: "+nw+")" : "");
     render();
   }catch(e){
     status.textContent = "Ошибка соединения: "+e;
   }
   go.disabled = false;
+}
+
+async function loadHistory(){
+  const status = document.getElementById("status");
+  status.innerHTML = '<span class="spinner"></span>Загружаю историю...';
+  try{
+    const r = await fetch("/api/history?limit=1000");
+    const data = await r.json();
+    ALL = (data.rows || []).map(r=>({...r, is_new:false}));
+    META = {history:true, stats:data.stats};
+    status.textContent = "История: "+ALL.length+" заказов (всего в базе: "+
+      (data.stats ? data.stats.total : ALL.length)+")";
+    render();
+  }catch(e){
+    status.textContent = "Ошибка загрузки истории: "+e;
+  }
 }
 
 function catLabel(c){
@@ -489,6 +541,7 @@ function render(){
     if(view==="applied" && !applied.has(key)) return false;
     if(view==="fav" && !fav.has(key)) return false;
     if(view==="new" && (applied.has(key) || hidden.has(key))) return false;
+    if(view==="isnew" && !r.is_new) return false;
     return true;
   });
 
@@ -511,6 +564,7 @@ function render(){
     const cls = isHidden ? "declined" : (isApplied ? "applied" : "");
     const cats = (r.categories||[]).map(c=>'<span class="tag cat">'+catLabel(c)+'</span>').join("");
     const price = r.price ? '<span class="tag price">'+esc(r.price)+'</span>' : "";
+    const newBadge = r.is_new ? '<span class="tag" style="background:#2ecc71;color:#fff;border-color:#2ecc71">NEW</span>' : "";
     return `<div class="card ${cls}" data-key="${escAttr(key)}">
       <div class="actions">
         <button class="fav ${isFav?'on':''}" title="В избранное">${isFav?'&#9733;':'&#9734;'}</button>
@@ -520,7 +574,7 @@ function render(){
       <h3><a href="${escAttr(r.link)}" target="_blank" rel="noopener">${esc(r.name||"(без названия)")}</a></h3>
       <div class="desc">${esc((r.desc||"").slice(0,300))}</div>
       <div class="meta">
-        <span class="tag">${esc(r.source)}</span>${cats}${price}
+        ${newBadge}<span class="tag">${esc(r.source)}</span>${cats}${price}
       </div>
     </div>`;
   }).join("");
@@ -568,6 +622,7 @@ function esc(s){ return (s||"").replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">
 function escAttr(s){ return (s||"").replace(/"/g,"&quot;").replace(/[<>]/g,c=>({"<":"&lt;",">":"&gt;"}[c])); }
 
 document.getElementById("go").onclick = search;
+document.getElementById("loadHistory").onclick = loadHistory;
 document.getElementById("exportXlsx").onclick = ()=>doExport("xlsx");
 document.getElementById("exportCsv").onclick = ()=>doExport("csv");
 ["minPrice","maxPrice","filterText","viewFilter","sortBy"].forEach(id=>
